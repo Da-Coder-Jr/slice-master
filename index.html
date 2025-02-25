@@ -1,408 +1,515 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Slice Master - Single File Demo</title>
+  <meta charset="UTF-8">
+  <title>Slice Master 3D - Advanced Demo</title>
+  <!-- Minimal inline styling -->
   <style>
-    /* BASIC RESET */
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
     }
-
-    /* BODY STYLING */
     body {
-      background: #daf6ff; /* Light sky color */
+      background: #b3ecff;
       font-family: sans-serif;
-      user-select: none;
-      overflow: hidden; /* Hide scrollbars if any */
+      overflow: hidden;
+    }
+    #gameContainer {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
     }
 
-    /* CANVAS STYLING */
-    #gameCanvas {
-      display: block;
-      margin: 0 auto;
-      background: #a9e9ff; /* Slightly different sky color for contrast */
-      border: 1px solid #333;
-    }
-
-    /* OVERLAY UI */
-    .ui-overlay {
+    /* MAIN MENU SCREEN */
+    #mainMenu {
       position: absolute;
-      top: 0;
-      left: 0;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      color: #fff;
+      z-index: 10;
+    }
+    #mainMenu h1 {
+      font-size: 48px;
+      margin-bottom: 20px;
+    }
+    #mainMenu button {
+      font-size: 24px;
+      padding: 10px 20px;
+      cursor: pointer;
+    }
+
+    /* HUD overlay for score, coins, level */
+    #hudOverlay {
+      position: absolute;
+      top: 0; left: 0;
       width: 100%;
-      padding: 10px;
-      color: #333;
-      font-weight: bold;
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      pointer-events: none; /* Let clicks pass through to canvas */
+      pointer-events: none;
+      color: #333;
+      font-weight: bold;
+      padding: 10px;
+      z-index: 5;
     }
-
-    .coin-counter {
-      font-size: 18px;
-    }
-
-    .level-display {
+    .hud-left, .hud-right {
       font-size: 20px;
-      margin-right: 20px;
+    }
+    .hud-center {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      font-size: 24px;
+    }
+
+    /* GAME OVER SCREEN */
+    #gameOver {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5);
+      color: #fff;
+      font-size: 36px;
+      font-weight: bold;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 10;
+    }
+    #gameOver.show {
+      display: flex;
     }
   </style>
 </head>
 <body>
-  <!-- UI Overlay -->
-  <div class="ui-overlay">
-    <div class="coin-counter" id="coinCounter">Coins: 6.3k</div>
-    <div class="level-display" id="levelDisplay">Level 6</div>
+<div id="gameContainer">
+  <!-- Main Menu -->
+  <div id="mainMenu">
+    <h1>SLICE MASTER 3D</h1>
+    <button id="startBtn">Start Game</button>
   </div>
 
-  <canvas id="gameCanvas" width="960" height="540"></canvas>
+  <!-- HUD Overlay -->
+  <div id="hudOverlay" style="display:none;">
+    <div class="hud-left" id="coinDisplay">Coins: 6.3k</div>
+    <div class="hud-center">
+      <div id="gameTitle">Slice Master 3D</div>
+      <div id="levelDisplay">Level 6</div>
+    </div>
+    <div class="hud-right" id="scoreDisplay">Score: 0</div>
+  </div>
 
-  <script>
-  /************************************************************
-   * GLOBAL CONFIG & VARIABLES
-   ************************************************************/
-  const canvas = document.getElementById('gameCanvas');
-  const ctx = canvas.getContext('2d');
+  <!-- Game Over Screen -->
+  <div id="gameOver">
+    <div>GAME OVER<br><span id="finalScore"></span></div>
+  </div>
+</div>
 
-  const coinCounterEl = document.getElementById('coinCounter');
-  const levelDisplayEl = document.getElementById('levelDisplay');
+<!-- EXTERNAL LIBRARIES -->
+<!-- Three.js (r148) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r148/three.min.js"></script>
+<!-- GLTFLoader (from Three.js examples) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/loaders/GLTFLoader.js"></script>
+<!-- Cannon-es (physics engine) -->
+<script src="https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"></script>
 
-  // Game settings
-  const GRAVITY = 1200;          // Pixels/sec^2
-  const JUMP_IMPULSE = -600;     // Upward velocity when jumping
-  const KNIFE_SPEED = 150;       // Forward speed in px/sec
-  const GROUND_LEVEL = canvas.height - 100; // Arbitrary "floor" y
+<script>
+/********************************************************************
+ * GLOBALS
+ ********************************************************************/
+let scene, camera, renderer;
+let clock;
+let gameRunning = false;
+let score = 0;
+let coinCount = 6300;
+let level = 6;
+let spacePressed = false;
 
-  // Timers
-  let lastTime = 0;    // For delta time
-  let gameRunning = true;
+/** UI elements **/
+const mainMenu = document.getElementById('mainMenu');
+const startBtn = document.getElementById('startBtn');
+const hudOverlay = document.getElementById('hudOverlay');
+const coinDisplay = document.getElementById('coinDisplay');
+const levelDisplay = document.getElementById('levelDisplay');
+const scoreDisplay = document.getElementById('scoreDisplay');
+const gameOverDiv = document.getElementById('gameOver');
+const finalScoreEl = document.getElementById('finalScore');
 
-  // Score / coins / level
-  let coinCount = 6300; // 6.3k initial
-  let score = 0;
-  let level = 6;
+/** Audio (replace with your own links if desired) **/
+const bgMusic = new Audio("https://cdn.pixabay.com/download/audio/2023/04/06/audio_993d10f847.mp3?filename=future-bass-vlog-143272.mp3");
+bgMusic.loop = true;
+bgMusic.volume = 0.3;
 
-  /************************************************************
-   * KNIFE OBJECT
-   ************************************************************/
-  const knife = {
-    x: 100,
-    y: GROUND_LEVEL,
-    width: 40,
-    height: 10,
-    vx: KNIFE_SPEED,
-    vy: 0,
-    angle: 0,       // For rotation
-    onGround: false
-  };
+const sliceSound = new Audio("https://cdn.pixabay.com/download/audio/2022/03/11/audio_7dbd3c5165.mp3?filename=slice-91378.mp3");
+sliceSound.volume = 0.6;
 
-  /************************************************************
-   * GAME OBJECTS (OBSTACLES, SLICABLES, ETC.)
-   ************************************************************/
-  // We'll define two categories:
-  // 1) "Sliceable" objects (like macarons or stacked objects).
-  // 2) "Obstacle" objects (pink spikes).
-  const gameObjects = [];
+/********************************************************************
+ * PHYSICS (CANNON-ES)
+ ********************************************************************/
+let world;
+let knifeBody;     // Rigid body for the knife
+let objectsToRemove = [];
 
-  // Example "sliceable" object structure:
-  // { x, y, width, height, type: 'sliceable', isSliced: false }
+/********************************************************************
+ * 3D OBJECTS
+ ********************************************************************/
+let knifeMesh = null; // loaded from GLTF
+let donutModel = null; // loaded from GLTF
+let blockModel = null; // loaded from GLTF
+let environmentChunks = []; // for infinite/scrolling environment
 
-  // Example "obstacle" object structure:
-  // { x, y, width, height, type: 'obstacle' }
+/********************************************************************
+ * GAME CONSTANTS
+ ********************************************************************/
+const KNIFE_SPEED = 8;
+const JUMP_IMPULSE = 15;
+const GRAVITY = 30;
+const WORLD_STEP = 1/60; // 60 fps physics
+const DISTANCE_BETWEEN_CHUNKS = 30; // each chunk is 30 units ahead
+let chunkCount = 0; // how many chunks have been spawned
 
-  // Let's generate some test objects for demonstration
-  function createTestObjects() {
-    // We'll place a few "sliceable" stacks and pink obstacles
-    // in a line to mimic the stacked shapes from the screenshot.
+/********************************************************************
+ * MAIN INIT
+ ********************************************************************/
+function initGame() {
+  // Hide main menu, show HUD
+  mainMenu.style.display = 'none';
+  hudOverlay.style.display = 'flex';
+  gameRunning = true;
+  score = 0;
+  coinCount = 6300;
 
-    // 1. Macaron stack (sliceable)
-    gameObjects.push({
-      x: 400, y: GROUND_LEVEL - 50,
-      width: 50, height: 50,
-      type: 'sliceable',
-      color: '#ff00a2',
-      isSliced: false
-    });
+  // Start background music (if not blocked by browser)
+  bgMusic.play().catch(() => {});
 
-    gameObjects.push({
-      x: 400, y: GROUND_LEVEL - 100,
-      width: 50, height: 50,
-      type: 'sliceable',
-      color: '#ff7bcd',
-      isSliced: false
-    });
+  // Setup Three.js scene
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xb3ecff);
+  scene.fog = new THREE.Fog(0xb3ecff, 50, 200);
 
-    // 2. Pink obstacle
-    gameObjects.push({
-      x: 600, y: GROUND_LEVEL - 40,
-      width: 40, height: 40,
-      type: 'obstacle',
-      color: '#ff66d8'
-    });
+  camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+  );
+  camera.position.set(0, 5, 15);
 
-    // 3. More stacked items
-    gameObjects.push({
-      x: 800, y: GROUND_LEVEL - 30,
-      width: 50, height: 30,
-      type: 'sliceable',
-      color: '#f4b042',
-      isSliced: false
-    });
-    gameObjects.push({
-      x: 800, y: GROUND_LEVEL - 60,
-      width: 50, height: 30,
-      type: 'sliceable',
-      color: '#fcebbb',
-      isSliced: false
-    });
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.getElementById('gameContainer').appendChild(renderer.domElement);
 
-    // 4. Another pink obstacle
-    gameObjects.push({
-      x: 1000, y: GROUND_LEVEL - 60,
-      width: 60, height: 60,
-      type: 'obstacle',
-      color: '#ff66d8'
-    });
-  }
+  clock = new THREE.Clock();
 
-  createTestObjects();
+  // Lights
+  const ambLight = new THREE.AmbientLight(0xffffff, 0.8);
+  scene.add(ambLight);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  dirLight.position.set(10, 20, 10);
+  scene.add(dirLight);
 
-  /************************************************************
-   * INPUT HANDLING
-   ************************************************************/
-  let spacePressed = false;
+  // Physics world
+  world = new CANNON.World({
+    gravity: new CANNON.Vec3(0, -GRAVITY, 0)
+  });
 
-  function handleKeyDown(e) {
-    if (e.code === 'Space') {
-      spacePressed = true;
+  // Create ground plane in physics + 3D
+  createGround();
+
+  // Preload models (knife, donut, block), then create knife
+  preloadModels().then(() => {
+    createKnife();
+    // Create some initial environment chunks
+    for (let i = 0; i < 5; i++) {
+      spawnChunk(i);
     }
+    // Start the loop
+    animate();
+  });
+
+  // Listen for input
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('mousedown', () => { spacePressed = true; });
+  window.addEventListener('mouseup', () => { spacePressed = false; });
+  window.addEventListener('resize', onWindowResize);
+}
+
+/********************************************************************
+ * PRELOAD MODELS (GLTF)
+ * Replace these URLs with your own 3D models
+ ********************************************************************/
+function preloadModels() {
+  const loader = new THREE.GLTFLoader();
+  const tasks = [];
+
+  // Minimal pink donut model
+  tasks.push(new Promise((resolve, reject) => {
+    loader.load(
+      "https://raw.githubusercontent.com/nidorx/misc-examples/main/donut.glb",
+      gltf => {
+        donutModel = gltf.scene;
+        donutModel.scale.set(1.5, 1.5, 1.5);
+        resolve();
+      },
+      undefined,
+      err => reject(err)
+    );
+  }));
+
+  // Simple block model (white box)
+  tasks.push(new Promise((resolve, reject) => {
+    loader.load(
+      "https://raw.githubusercontent.com/nidorx/misc-examples/main/white_block.glb",
+      gltf => {
+        blockModel = gltf.scene;
+        blockModel.scale.set(2, 2, 2);
+        resolve();
+      },
+      undefined,
+      err => reject(err)
+    );
+  }));
+
+  // Knife model
+  tasks.push(new Promise((resolve, reject) => {
+    loader.load(
+      "https://raw.githubusercontent.com/nidorx/misc-examples/main/knife_simple.glb",
+      gltf => {
+        knifeMesh = gltf.scene;
+        knifeMesh.scale.set(1.2, 1.2, 1.2);
+        resolve();
+      },
+      undefined,
+      err => reject(err)
+    );
+  }));
+
+  return Promise.all(tasks);
+}
+
+/********************************************************************
+ * CREATE GROUND
+ ********************************************************************/
+function createGround() {
+  // Visual plane
+  const planeGeo = new THREE.PlaneGeometry(1000, 1000);
+  const planeMat = new THREE.MeshLambertMaterial({ color: 0xe6fcff });
+  const planeMesh = new THREE.Mesh(planeGeo, planeMat);
+  planeMesh.rotation.x = -Math.PI / 2;
+  scene.add(planeMesh);
+
+  // Physics
+  const groundBody = new CANNON.Body({
+    shape: new CANNON.Plane(),
+    mass: 0, // static
+  });
+  groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+  world.addBody(groundBody);
+}
+
+/********************************************************************
+ * CREATE KNIFE (PHYSICS + VISUAL)
+ ********************************************************************/
+function createKnife() {
+  // Physics body
+  const knifeShape = new CANNON.Box(new CANNON.Vec3(0.5, 0.2, 1)); // approximate bounding box
+  knifeBody = new CANNON.Body({
+    mass: 1,
+    shape: knifeShape,
+    position: new CANNON.Vec3(0, 1, 0)
+  });
+  knifeBody.linearDamping = 0.1; // slow horizontal drifting
+  world.addBody(knifeBody);
+
+  // Add the 3D model
+  scene.add(knifeMesh);
+  knifeMesh.position.set(0, 1, 0);
+}
+
+/********************************************************************
+ * SPAWN A "CHUNK" OF BLOCKS + DONUTS
+ * For infinite/scrolling approach, we create new chunks in front
+ ********************************************************************/
+function spawnChunk(index) {
+  // chunkZ is negative forward if camera is looking down negative Z
+  const chunkZ = -index * DISTANCE_BETWEEN_CHUNKS - 20;
+  chunkCount++;
+
+  // Create a random block
+  if (blockModel) {
+    const blockClone = blockModel.clone();
+    blockClone.position.set(Math.random() * 10 - 5, 1, chunkZ + (Math.random()*10-5));
+    scene.add(blockClone);
+
+    // Add physics
+    const boxShape = new CANNON.Box(new CANNON.Vec3(1,1,1)); // approximate
+    const blockBody = new CANNON.Body({
+      mass: 0,
+      shape: boxShape,
+      position: new CANNON.Vec3(blockClone.position.x, blockClone.position.y, blockClone.position.z)
+    });
+    world.addBody(blockBody);
   }
-  function handleKeyUp(e) {
-    if (e.code === 'Space') {
-      spacePressed = false;
+
+  // Create a random donut
+  if (donutModel) {
+    const donutClone = donutModel.clone();
+    donutClone.position.set(Math.random() * 8 - 4, 2, chunkZ + (Math.random()*8-4));
+    scene.add(donutClone);
+
+    // Add physics
+    const donutBodyShape = new CANNON.Sphere(0.8); // approximate
+    const donutBody = new CANNON.Body({
+      mass: 1,
+      shape: donutBodyShape,
+      position: new CANNON.Vec3(donutClone.position.x, donutClone.position.y, donutClone.position.z),
+    });
+    donutBody.linearDamping = 0.2;
+    donutBody.angularDamping = 0.2;
+    world.addBody(donutBody);
+
+    // Store reference so we can detect slicing
+    environmentChunks.push({
+      type: 'donut',
+      mesh: donutClone,
+      body: donutBody,
+      sliced: false
+    });
+  }
+}
+
+/********************************************************************
+ * ANIMATION LOOP
+ ********************************************************************/
+function animate() {
+  if (!gameRunning) return;
+  requestAnimationFrame(animate);
+
+  const dt = clock.getDelta();
+
+  // Step physics
+  world.step(WORLD_STEP, dt);
+
+  // Knife forward motion
+  if (knifeBody && !checkGameOver()) {
+    // Constant forward velocity along negative Z
+    knifeBody.velocity.z = -KNIFE_SPEED;
+
+    // Jump logic
+    if (spacePressed && Math.abs(knifeBody.velocity.y) < 0.001) {
+      // apply impulse upward
+      knifeBody.velocity.y = JUMP_IMPULSE;
     }
-  }
 
-  // Also handle mouse/touch input for jump
-  function handleMouseDown() {
-    spacePressed = true;
-  }
-  function handleMouseUp() {
-    spacePressed = false;
-  }
+    // Sync knifeMesh position/rotation with physics body
+    knifeMesh.position.copy(knifeBody.position);
+    knifeMesh.quaternion.copy(knifeBody.quaternion);
 
-  window.addEventListener('keydown', handleKeyDown);
-  window.addEventListener('keyup', handleKeyUp);
-  window.addEventListener('mousedown', handleMouseDown);
-  window.addEventListener('mouseup', handleMouseUp);
-
-  /************************************************************
-   * GAME LOOP
-   ************************************************************/
-  function gameLoop(timestamp) {
-    if (!gameRunning) return;
-
-    // Calculate delta time (in seconds)
-    let dt = (timestamp - lastTime) / 1000;
-    lastTime = timestamp;
-
-    // Update
-    update(dt);
-
-    // Render
-    draw();
-
-    requestAnimationFrame(gameLoop);
-  }
-
-  /************************************************************
-   * UPDATE FUNCTION
-   ************************************************************/
-  function update(dt) {
-    // 1. Handle Knife Movement
-    // Horizontal
-    knife.x += knife.vx * dt;
-
-    // Vertical
-    if (spacePressed && knife.onGround) {
-      // Jump impulse
-      knife.vy = JUMP_IMPULSE;
-      knife.onGround = false;
-      playSound('jump');
-    }
-    // Gravity
-    knife.vy += GRAVITY * dt;
-    knife.y += knife.vy * dt;
-
-    // Check ground collision
-    if (knife.y >= GROUND_LEVEL) {
-      knife.y = GROUND_LEVEL;
-      knife.vy = 0;
-      knife.onGround = true;
+    // Minor rotation if airborne
+    if (Math.abs(knifeBody.velocity.y) > 0.1) {
+      knifeMesh.rotation.x += 5 * dt;
     }
 
-    // Angle/Rotation update
-    if (!knife.onGround) {
-      knife.angle += 360 * dt; // 360 deg per second (adjust to taste)
-    }
-
-    // 2. Check collisions with objects
-    for (let obj of gameObjects) {
-      // If object is behind the knife, ignore it
-      if (obj.x + obj.width < knife.x - 50) {
-        continue;
-      }
-      // Basic bounding-box collision check
-      if (rectIntersect(knife, obj)) {
-        if (obj.type === 'obstacle') {
-          // Collided with pink spike -> game over or reset
-          playSound('hitObstacle');
-          endGame();
-        } else if (obj.type === 'sliceable' && !obj.isSliced) {
-          // Slice the object
-          obj.isSliced = true;
+    // Check collisions with donuts
+    environmentChunks.forEach(ch => {
+      if (ch.type === 'donut' && !ch.sliced) {
+        // If bounding boxes overlap
+        const distance = ch.body.position.distanceTo(knifeBody.position);
+        if (distance < 1.2) {
+          // "Slice" donut
+          ch.sliced = true;
+          sliceSound.currentTime = 0;
+          sliceSound.play().catch(()=>{});
           score += 10;
-          coinCount += 2; // Award coins
-          playSound('slice');
+          coinCount++;
+          updateHUD();
+          // Optionally remove donut from scene
+          scene.remove(ch.mesh);
+          world.removeBody(ch.body);
         }
       }
-    }
+    });
 
-    // 3. Simple camera shift (optional)
-    // If you want the knife to stay roughly center, you could shift everything else
-    // But here we just let the knife run off to the right for simplicity.
-
-    // 4. Update UI
-    coinCounterEl.textContent = `Coins: ${formatCoins(coinCount)}`;
-    levelDisplayEl.textContent = `Level ${level}`;
-  }
-
-  /************************************************************
-   * DRAW FUNCTION
-   ************************************************************/
-  function draw() {
-    // Clear the canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw background elements (mountains, trees, etc.):
-    drawBackground();
-
-    // Draw knife
-    ctx.save();
-    // Translate to knife center
-    ctx.translate(knife.x, knife.y);
-    // Rotate around the center of the knife
-    ctx.rotate((knife.angle * Math.PI) / 180);
-    // Draw the knife rectangle
-    ctx.fillStyle = '#3388ff';
-    ctx.fillRect(-knife.width / 2, -knife.height / 2, knife.width, knife.height);
-    ctx.restore();
-
-    // Draw objects
-    for (let obj of gameObjects) {
-      if (obj.type === 'obstacle') {
-        ctx.fillStyle = obj.color || '#ff66d8';
-      } else if (obj.type === 'sliceable' && !obj.isSliced) {
-        ctx.fillStyle = obj.color || '#f4b042';
-      } else if (obj.type === 'sliceable' && obj.isSliced) {
-        // Already sliced, draw it differently
-        ctx.fillStyle = '#ccc';
-      }
-      ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
-    }
-
-    // Optionally, draw score on canvas
-    ctx.fillStyle = '#333';
-    ctx.font = '18px Arial';
-    ctx.fillText(`Score: ${score}`, 10, 30);
-  }
-
-  /************************************************************
-   * DRAW BACKGROUND (SKY, MOUNTAINS, TREES)
-   ************************************************************/
-  function drawBackground() {
-    // Sky is the body background. We'll draw some stylized mountains/trees for effect.
-
-    // Example: A few mountains
-    ctx.fillStyle = '#b3f0ff';
-    // Mountain 1
-    ctx.beginPath();
-    ctx.moveTo(100, canvas.height - 150);
-    ctx.lineTo(200, 200);
-    ctx.lineTo(300, canvas.height - 150);
-    ctx.closePath();
-    ctx.fill();
-
-    // Mountain 2
-    ctx.beginPath();
-    ctx.moveTo(600, canvas.height - 180);
-    ctx.lineTo(700, 250);
-    ctx.lineTo(800, canvas.height - 180);
-    ctx.closePath();
-    ctx.fill();
-
-    // Draw a ground line
-    ctx.strokeStyle = '#77d9ff';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(0, GROUND_LEVEL + knife.height);
-    ctx.lineTo(canvas.width, GROUND_LEVEL + knife.height);
-    ctx.stroke();
-  }
-
-  /************************************************************
-   * HELPER FUNCTIONS
-   ************************************************************/
-  function rectIntersect(r1, r2) {
-    // We'll consider r1.x, r1.y as center if it's the knife
-    // but for simplicity, let's treat them as top-left for bounding box
-    // We'll adjust for the knife's center offset
-    let r1x1 = r1.x - r1.width / 2;
-    let r1y1 = r1.y - r1.height / 2;
-    let r1x2 = r1x1 + r1.width;
-    let r1y2 = r1y1 + r1.height;
-
-    let r2x1 = r2.x;
-    let r2y1 = r2.y;
-    let r2x2 = r2x1 + r2.width;
-    let r2y2 = r2y1 + r2.height;
-
-    return !(r2x1 > r1x2 ||
-             r2x2 < r1x1 ||
-             r2y1 > r1y2 ||
-             r2y2 < r1y1);
-  }
-
-  function formatCoins(coins) {
-    // Very simple formatting to replicate "6.3k" style
-    if (coins >= 1000) {
-      return (coins / 1000).toFixed(1) + 'k';
-    } else {
-      return coins.toString();
+    // If the knife has moved far enough, spawn a new chunk
+    const knifeZ = knifeBody.position.z;
+    const nextChunkIndex = Math.floor((-knifeZ + 20) / DISTANCE_BETWEEN_CHUNKS);
+    if (nextChunkIndex >= chunkCount) {
+      spawnChunk(nextChunkIndex);
     }
   }
 
-  function playSound(type) {
-    // For demonstration, we won't embed actual audio files here.
-    // You can use HTMLAudioElement or Howler.js, etc.
-    // console.log(`Playing sound: ${type}`);
-  }
+  renderer.render(scene, camera);
+}
 
-  function endGame() {
-    gameRunning = false;
-    alert(`Game Over!\nFinal Score: ${score}`);
-    // Reload or reset as needed
-    window.location.reload();
+/********************************************************************
+ * CHECK GAME OVER
+ * If the knife is too far (e.g., z < -200) or y < -10 => game over
+ ********************************************************************/
+function checkGameOver() {
+  if (!knifeBody) return false;
+  if (knifeBody.position.y < -10) {
+    // Fell off the world
+    endGame();
+    return true;
   }
+  if (knifeBody.position.z < -500) {
+    // traveled too far
+    endGame();
+    return true;
+  }
+  return false;
+}
 
-  /************************************************************
-   * START THE GAME
-   ************************************************************/
-  requestAnimationFrame(gameLoop);
-  </script>
+/********************************************************************
+ * END GAME
+ ********************************************************************/
+function endGame() {
+  gameRunning = false;
+  finalScoreEl.textContent = `Score: ${score}`;
+  gameOverDiv.classList.add('show');
+  bgMusic.pause();
+}
+
+/********************************************************************
+ * UPDATE HUD
+ ********************************************************************/
+function updateHUD() {
+  coinDisplay.textContent = `Coins: ${formatCoins(coinCount)}`;
+  levelDisplay.textContent = `Level ${level}`;
+  scoreDisplay.textContent = `Score: ${score}`;
+}
+
+function formatCoins(c) {
+  if (c >= 1000) return (c/1000).toFixed(1) + 'k';
+  return c.toString();
+}
+
+/********************************************************************
+ * EVENT HANDLERS
+ ********************************************************************/
+startBtn.addEventListener('click', () => {
+  initGame();
+});
+
+function onKeyDown(e) {
+  if (e.code === 'Space') spacePressed = true;
+}
+function onKeyUp(e) {
+  if (e.code === 'Space') spacePressed = false;
+}
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+</script>
 </body>
 </html>
