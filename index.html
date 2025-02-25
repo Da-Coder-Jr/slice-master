@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Slice Master - Single File Demo</title>
+  <style>
+    /* BASIC RESET */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    /* BODY STYLING */
+    body {
+      background: #daf6ff; /* Light sky color */
+      font-family: sans-serif;
+      user-select: none;
+      overflow: hidden; /* Hide scrollbars if any */
+    }
+
+    /* CANVAS STYLING */
+    #gameCanvas {
+      display: block;
+      margin: 0 auto;
+      background: #a9e9ff; /* Slightly different sky color for contrast */
+      border: 1px solid #333;
+    }
+
+    /* OVERLAY UI */
+    .ui-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      padding: 10px;
+      color: #333;
+      font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none; /* Let clicks pass through to canvas */
+    }
+
+    .coin-counter {
+      font-size: 18px;
+    }
+
+    .level-display {
+      font-size: 20px;
+      margin-right: 20px;
+    }
+  </style>
+</head>
+<body>
+  <!-- UI Overlay -->
+  <div class="ui-overlay">
+    <div class="coin-counter" id="coinCounter">Coins: 6.3k</div>
+    <div class="level-display" id="levelDisplay">Level 6</div>
+  </div>
+
+  <canvas id="gameCanvas" width="960" height="540"></canvas>
+
+  <script>
+  /************************************************************
+   * GLOBAL CONFIG & VARIABLES
+   ************************************************************/
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const coinCounterEl = document.getElementById('coinCounter');
+  const levelDisplayEl = document.getElementById('levelDisplay');
+
+  // Game settings
+  const GRAVITY = 1200;          // Pixels/sec^2
+  const JUMP_IMPULSE = -600;     // Upward velocity when jumping
+  const KNIFE_SPEED = 150;       // Forward speed in px/sec
+  const GROUND_LEVEL = canvas.height - 100; // Arbitrary "floor" y
+
+  // Timers
+  let lastTime = 0;    // For delta time
+  let gameRunning = true;
+
+  // Score / coins / level
+  let coinCount = 6300; // 6.3k initial
+  let score = 0;
+  let level = 6;
+
+  /************************************************************
+   * KNIFE OBJECT
+   ************************************************************/
+  const knife = {
+    x: 100,
+    y: GROUND_LEVEL,
+    width: 40,
+    height: 10,
+    vx: KNIFE_SPEED,
+    vy: 0,
+    angle: 0,       // For rotation
+    onGround: false
+  };
+
+  /************************************************************
+   * GAME OBJECTS (OBSTACLES, SLICABLES, ETC.)
+   ************************************************************/
+  // We'll define two categories:
+  // 1) "Sliceable" objects (like macarons or stacked objects).
+  // 2) "Obstacle" objects (pink spikes).
+  const gameObjects = [];
+
+  // Example "sliceable" object structure:
+  // { x, y, width, height, type: 'sliceable', isSliced: false }
+
+  // Example "obstacle" object structure:
+  // { x, y, width, height, type: 'obstacle' }
+
+  // Let's generate some test objects for demonstration
+  function createTestObjects() {
+    // We'll place a few "sliceable" stacks and pink obstacles
+    // in a line to mimic the stacked shapes from the screenshot.
+
+    // 1. Macaron stack (sliceable)
+    gameObjects.push({
+      x: 400, y: GROUND_LEVEL - 50,
+      width: 50, height: 50,
+      type: 'sliceable',
+      color: '#ff00a2',
+      isSliced: false
+    });
+
+    gameObjects.push({
+      x: 400, y: GROUND_LEVEL - 100,
+      width: 50, height: 50,
+      type: 'sliceable',
+      color: '#ff7bcd',
+      isSliced: false
+    });
+
+    // 2. Pink obstacle
+    gameObjects.push({
+      x: 600, y: GROUND_LEVEL - 40,
+      width: 40, height: 40,
+      type: 'obstacle',
+      color: '#ff66d8'
+    });
+
+    // 3. More stacked items
+    gameObjects.push({
+      x: 800, y: GROUND_LEVEL - 30,
+      width: 50, height: 30,
+      type: 'sliceable',
+      color: '#f4b042',
+      isSliced: false
+    });
+    gameObjects.push({
+      x: 800, y: GROUND_LEVEL - 60,
+      width: 50, height: 30,
+      type: 'sliceable',
+      color: '#fcebbb',
+      isSliced: false
+    });
+
+    // 4. Another pink obstacle
+    gameObjects.push({
+      x: 1000, y: GROUND_LEVEL - 60,
+      width: 60, height: 60,
+      type: 'obstacle',
+      color: '#ff66d8'
+    });
+  }
+
+  createTestObjects();
+
+  /************************************************************
+   * INPUT HANDLING
+   ************************************************************/
+  let spacePressed = false;
+
+  function handleKeyDown(e) {
+    if (e.code === 'Space') {
+      spacePressed = true;
+    }
+  }
+  function handleKeyUp(e) {
+    if (e.code === 'Space') {
+      spacePressed = false;
+    }
+  }
+
+  // Also handle mouse/touch input for jump
+  function handleMouseDown() {
+    spacePressed = true;
+  }
+  function handleMouseUp() {
+    spacePressed = false;
+  }
+
+  window.addEventListener('keydown', handleKeyDown);
+  window.addEventListener('keyup', handleKeyUp);
+  window.addEventListener('mousedown', handleMouseDown);
+  window.addEventListener('mouseup', handleMouseUp);
+
+  /************************************************************
+   * GAME LOOP
+   ************************************************************/
+  function gameLoop(timestamp) {
+    if (!gameRunning) return;
+
+    // Calculate delta time (in seconds)
+    let dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
+    // Update
+    update(dt);
+
+    // Render
+    draw();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  /************************************************************
+   * UPDATE FUNCTION
+   ************************************************************/
+  function update(dt) {
+    // 1. Handle Knife Movement
+    // Horizontal
+    knife.x += knife.vx * dt;
+
+    // Vertical
+    if (spacePressed && knife.onGround) {
+      // Jump impulse
+      knife.vy = JUMP_IMPULSE;
+      knife.onGround = false;
+      playSound('jump');
+    }
+    // Gravity
+    knife.vy += GRAVITY * dt;
+    knife.y += knife.vy * dt;
+
+    // Check ground collision
+    if (knife.y >= GROUND_LEVEL) {
+      knife.y = GROUND_LEVEL;
+      knife.vy = 0;
+      knife.onGround = true;
+    }
+
+    // Angle/Rotation update
+    if (!knife.onGround) {
+      knife.angle += 360 * dt; // 360 deg per second (adjust to taste)
+    }
+
+    // 2. Check collisions with objects
+    for (let obj of gameObjects) {
+      // If object is behind the knife, ignore it
+      if (obj.x + obj.width < knife.x - 50) {
+        continue;
+      }
+      // Basic bounding-box collision check
+      if (rectIntersect(knife, obj)) {
+        if (obj.type === 'obstacle') {
+          // Collided with pink spike -> game over or reset
+          playSound('hitObstacle');
+          endGame();
+        } else if (obj.type === 'sliceable' && !obj.isSliced) {
+          // Slice the object
+          obj.isSliced = true;
+          score += 10;
+          coinCount += 2; // Award coins
+          playSound('slice');
+        }
+      }
+    }
+
+    // 3. Simple camera shift (optional)
+    // If you want the knife to stay roughly center, you could shift everything else
+    // But here we just let the knife run off to the right for simplicity.
+
+    // 4. Update UI
+    coinCounterEl.textContent = `Coins: ${formatCoins(coinCount)}`;
+    levelDisplayEl.textContent = `Level ${level}`;
+  }
+
+  /************************************************************
+   * DRAW FUNCTION
+   ************************************************************/
+  function draw() {
+    // Clear the canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw background elements (mountains, trees, etc.):
+    drawBackground();
+
+    // Draw knife
+    ctx.save();
+    // Translate to knife center
+    ctx.translate(knife.x, knife.y);
+    // Rotate around the center of the knife
+    ctx.rotate((knife.angle * Math.PI) / 180);
+    // Draw the knife rectangle
+    ctx.fillStyle = '#3388ff';
+    ctx.fillRect(-knife.width / 2, -knife.height / 2, knife.width, knife.height);
+    ctx.restore();
+
+    // Draw objects
+    for (let obj of gameObjects) {
+      if (obj.type === 'obstacle') {
+        ctx.fillStyle = obj.color || '#ff66d8';
+      } else if (obj.type === 'sliceable' && !obj.isSliced) {
+        ctx.fillStyle = obj.color || '#f4b042';
+      } else if (obj.type === 'sliceable' && obj.isSliced) {
+        // Already sliced, draw it differently
+        ctx.fillStyle = '#ccc';
+      }
+      ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+    }
+
+    // Optionally, draw score on canvas
+    ctx.fillStyle = '#333';
+    ctx.font = '18px Arial';
+    ctx.fillText(`Score: ${score}`, 10, 30);
+  }
+
+  /************************************************************
+   * DRAW BACKGROUND (SKY, MOUNTAINS, TREES)
+   ************************************************************/
+  function drawBackground() {
+    // Sky is the body background. We'll draw some stylized mountains/trees for effect.
+
+    // Example: A few mountains
+    ctx.fillStyle = '#b3f0ff';
+    // Mountain 1
+    ctx.beginPath();
+    ctx.moveTo(100, canvas.height - 150);
+    ctx.lineTo(200, 200);
+    ctx.lineTo(300, canvas.height - 150);
+    ctx.closePath();
+    ctx.fill();
+
+    // Mountain 2
+    ctx.beginPath();
+    ctx.moveTo(600, canvas.height - 180);
+    ctx.lineTo(700, 250);
+    ctx.lineTo(800, canvas.height - 180);
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw a ground line
+    ctx.strokeStyle = '#77d9ff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_LEVEL + knife.height);
+    ctx.lineTo(canvas.width, GROUND_LEVEL + knife.height);
+    ctx.stroke();
+  }
+
+  /************************************************************
+   * HELPER FUNCTIONS
+   ************************************************************/
+  function rectIntersect(r1, r2) {
+    // We'll consider r1.x, r1.y as center if it's the knife
+    // but for simplicity, let's treat them as top-left for bounding box
+    // We'll adjust for the knife's center offset
+    let r1x1 = r1.x - r1.width / 2;
+    let r1y1 = r1.y - r1.height / 2;
+    let r1x2 = r1x1 + r1.width;
+    let r1y2 = r1y1 + r1.height;
+
+    let r2x1 = r2.x;
+    let r2y1 = r2.y;
+    let r2x2 = r2x1 + r2.width;
+    let r2y2 = r2y1 + r2.height;
+
+    return !(r2x1 > r1x2 ||
+             r2x2 < r1x1 ||
+             r2y1 > r1y2 ||
+             r2y2 < r1y1);
+  }
+
+  function formatCoins(coins) {
+    // Very simple formatting to replicate "6.3k" style
+    if (coins >= 1000) {
+      return (coins / 1000).toFixed(1) + 'k';
+    } else {
+      return coins.toString();
+    }
+  }
+
+  function playSound(type) {
+    // For demonstration, we won't embed actual audio files here.
+    // You can use HTMLAudioElement or Howler.js, etc.
+    // console.log(`Playing sound: ${type}`);
+  }
+
+  function endGame() {
+    gameRunning = false;
+    alert(`Game Over!\nFinal Score: ${score}`);
+    // Reload or reset as needed
+    window.location.reload();
+  }
+
+  /************************************************************
+   * START THE GAME
+   ************************************************************/
+  requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
